@@ -28,6 +28,33 @@ system being run. This enables the operating system kernel to detect the updated
 microcode and enable Spectre mitigations that depend on it.
 
 
+## Important Limitations
+
+**This tool does NOT downgrade microcode below the version already loaded by BIOS.**
+
+Intel CPUs have a hardware version lock: once BIOS loads a microcode update (e.g. v27),
+the CPU refuses to load any microcode with a lower revision number. WRMSR to
+MSR 0x8B returns the current version, and the CPU silently rejects updates
+with a version less than or equal to the already-loaded one.
+
+What this means in practice:
+
+- **If your BIOS ships with microcode v27+** (most systems from 2019 onward):
+  this tool can only reset to v27 or higher. It **cannot** load v22 to restore
+  undervolt capability — the CPU will reject it.
+- **If your BIOS ships with older microcode** (pre-2019 systems):
+  this tool can load a newer version with Spectre mitigations.
+- **To actually downgrade microcode**, you must modify the BIOS firmware itself
+  (replace microcode in FIT/BIOS region), which requires:
+  - An external SPI programmer (CH341A) or BIOS flash tool
+  - Disabling RSA signature verification (if the BIOS uses it)
+  - Matching the microcode size to the original slot in the BIOS image
+  - Accepting the risk of a bricked system
+
+**In short: this tool is useful for systems that never received microcode updates.
+On systems where the BIOS already includes recent microcode, it has no practical effect.**
+
+
 ## Usage
 
 Boot the target system using a linux LiveCD or USB, such as
@@ -51,6 +78,61 @@ The installer will perform the following actions:
 To uninstall, run
 ```
 ./uRenovate.sh -u
+```
+
+
+## OpenCore Usage
+
+Uload.efi is a UEFI application that OpenCore loads from the `UEFI → Drivers` list.
+It runs before the OS bootloader, applying microcode update via WRMSR.
+
+### Installation
+
+1. Copy `Uload.efi` to `EFI/OC/Drivers/` on your EFI partition
+2. Copy your microcode `.bin` file to the same directory (e.g. `EFI/OC/Drivers/haswell_0x22.bin`)
+3. Add entry to `UEFI → Drivers` in your `config.plist`:
+
+```xml
+<dict>
+    <key>Arguments</key>
+    <string>/EFI/OC/Drivers/haswell_0x22.bin</string>
+    <key>Comment</key>
+    <string></string>
+    <key>Enabled</key>
+    <true/>
+    <key>LoadEarly</key>
+    <true/>
+    <key>Path</key>
+    <string>Uload.efi</string>
+</dict>
+```
+
+`LoadEarly = true` ensures Uload.efi runs before OpenCore bootloader.
+`Arguments` contains the POSIX-style path to the microcode file.
+
+### Filename resolution
+
+Uload.efi resolves the microcode filename in this order:
+
+1. **Shell command-line argument** — when launched from UEFI Shell
+2. **`LoadedImage->LoadOptions`** — OpenCore passes `Arguments` field here
+3. **Default: `ucode.pdb`** — in the root of the boot volume
+
+OpenCore uses forward slashes (`/`). Uload.efi converts `/` to `\` internally.
+
+### ScanPolicy
+
+For Uload.efi to read microcode from any volume, set `Misc → Security → ScanPolicy` to `0`.
+
+### Directory structure
+
+```
+EFI/
+  OC/
+    Drivers/
+      Uload.efi                ← Microcode loader
+      haswell_0x22.bin         ← Microcode file
+    config.plist
 ```
 
 
@@ -257,8 +339,8 @@ Example microcode files are provided in `third-party/`:
 * Not compatible with Sleep (S3). Hibernate is not impacted
 * Not currently compatible with UEFI secure boot
 * Windows sometimes fails to boot after running Uload.efi, rebooting usually resolves the problem
+* When loaded by OpenCore, microcode file must be on a readable volume (set ScanPolicy to 0)
 
 
 ## ToDo
 * error handling in EFI application and script
-* re-implement as DXE driver (to support S3)

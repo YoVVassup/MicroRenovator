@@ -6,8 +6,8 @@
   MODULE_UNI_FILE                = Uload.uni
   FILE_GUID                      = 6987936E-ED34-44db-AE97-1235E4ED2116
   MODULE_TYPE                    = UEFI_APPLICATION
-  VERSION_STRING                 = 0.7
-  ENTRY_POINT                    = ShellCEntryLib
+  VERSION_STRING                 = 0.8
+  ENTRY_POINT                    = UefiMain
   UEFI_HII_RESOURCE_SECTION      = TRUE
   VALID_ARCHITECTURES            = IA32 X64
 
@@ -21,20 +21,23 @@
   UefiCpuPkg/UefiCpuPkg.dec
 
 [LibraryClasses]
-  ShellCEntryLib
-  ShellLib
-  ShellCommandLib
+  UefiApplicationEntryPoint
   BaseLib
   BaseMemoryLib
   UefiLib
+  UefiBootServicesTableLib
+  DevicePathLib
+  MemoryAllocationLib
 
 [Protocols]
+  gEfiSimpleFileSystemProtocolGuid
+  gEfiLoadedImageProtocolGuid
+  gEfiMpServiceProtocolGuid
+  gEfiShellParametersProtocolGuid
+
+[Guids]
+  gEfiFileInfoGuid
 
 [BuildOptions]
 
 [Pcd]
-
-
-
-
-
