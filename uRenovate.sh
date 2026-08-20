@@ -179,7 +179,7 @@ if [ "$install" == "true" ]; then
     if [ "$demo" == "true" ]; then
 	cat <<EOF > /mnt/efi/EFI/BOOT/startup.nsh
 echo -off
-Uload.efi
+Uload.efi ucode.pdb
 pause
 echo "Now running $shortbootpath\\$bootname"
 $shortbootpath\\$bootname
@@ -187,7 +187,7 @@ EOF
     else
 	cat <<EOF > /mnt/efi/EFI/BOOT/startup.nsh
 echo -off
-Uload.efi
+Uload.efi ucode.pdb
 echo "Now running $shortbootpath\\$bootname"
 $shortbootpath\\$bootname
 EOF

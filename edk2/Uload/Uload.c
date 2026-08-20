@@ -22,15 +22,17 @@
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/PrintLib.h>
 
-#include <Protocol/EfiShell.h>
 #include <Protocol/LoadedImage.h>
 
 #include <Library/MpInitLib/MpLib.h>
-#include <Feature/Capsule/MicrocodeUpdateDxe/MicrocodeUpdate.h>
 
 
 #define UTILITY_VERSION L"0.7"
 
+typedef struct {
+  UINT64  Address;
+  UINT32  Revision;
+} MICROCODE_LOAD_BUFFER;
 
 // Print some info about a microcode patch. Added for debugging.
 // CPU_MICROCODE_HEADER is defined in UefiCpuPkg/Include/Register/Microcode.h
@@ -65,7 +67,7 @@ GetCurrentMicrocodeSignature ( VOID )
 
 // shamelessly copied from MicrocodeUpdateDxe/MicrocodeUpdate.c
 UINT32
-LoadMicrocode ( IN UINT64  Address )
+TriggerMicrocodeUpdate ( IN UINT64  Address )
 {
   AsmWriteMsr64(MSR_IA32_BIOS_UPDT_TRIG, Address);
   return GetCurrentMicrocodeSignature();
@@ -80,13 +82,13 @@ MicrocodeLoadAp ( IN OUT VOID  *Buffer )
   MICROCODE_LOAD_BUFFER                *MicrocodeLoadBuffer;
 
   MicrocodeLoadBuffer = Buffer;
-  MicrocodeLoadBuffer->Revision = LoadMicrocode (MicrocodeLoadBuffer->Address);
+  MicrocodeLoadBuffer->Revision = TriggerMicrocodeUpdate (MicrocodeLoadBuffer->Address);
 }
 
 
 // Copied from MicrocodeUpdateDxe/MicrocodeUpdate.c with minimal modification
 UINT32
-LoadMicrocodeOnThis (IN  UINTN                       Bsp,
+TriggerMicrocodeUpdateOnThis (IN  UINTN                       Bsp,
 		     IN  EFI_MP_SERVICES_PROTOCOL    *MpService,
 		     IN  UINTN                       CpuIndex,
 		     IN  UINT64                      Address )
@@ -95,7 +97,7 @@ LoadMicrocodeOnThis (IN  UINTN                       Bsp,
   MICROCODE_LOAD_BUFFER                MicrocodeLoadBuffer;
 
   if (CpuIndex == Bsp) {
-    return LoadMicrocode (Address);
+    return TriggerMicrocodeUpdate (Address);
   } else {
     MicrocodeLoadBuffer.Address = Address;
     MicrocodeLoadBuffer.Revision = 0;
@@ -114,16 +116,17 @@ LoadMicrocodeOnThis (IN  UINTN                       Bsp,
 }
 
 
-// Main application. Loads the microcode patch in "ucode.pdb"
-// It it out-of-scope currenty to deal with or manage multiple patch files, that
-// logic has been outsourced to the script installing this on the EFI boot partition.
+// Main application. Loads the microcode patch.
+// Usage: Uload.efi [filename]
+// If no filename is specified, defaults to "ucode.pdb".
 INTN
 EFIAPI
 ShellAppMain(UINTN Argc, CHAR16 **Argv)
 {
   EFI_STATUS                 Status = EFI_SUCCESS;
   SHELL_FILE_HANDLE          FileHandle;
-  CHAR16                     *FileName = L"ucode.pdb";
+  CHAR16                     *DefaultName = L"ucode.pdb";
+  CHAR16                     *FileName;
   CHAR16                     *FullFileName;
   VOID                       *Buffer;
   UINTN                      Size;
@@ -137,6 +140,13 @@ ShellAppMain(UINTN Argc, CHAR16 **Argv)
   UINT32                     TestCpu;
   CPU_MICROCODE_HEADER       *MicrocodePatch;
 
+  // Use filename from command line, or default to ucode.pdb
+  if (Argc > 1) {
+    FileName = Argv[1];
+  } else {
+    FileName = DefaultName;
+  }
+  Print(L"Loading microcode from: %s\n", FileName);
 
   // get full filename for open()
   FullFileName = ShellFindFilePath(FileName);
@@ -223,7 +233,7 @@ ShellAppMain(UINTN Argc, CHAR16 **Argv)
 
     // Starting point of uCode patch data = (UINTN) Buffer + sizeof(CPU_MICROCODE_HEADER)    
     Print(L"Attempting to load ucode on processor %u\n", cpu); 
-    TestCpu = LoadMicrocodeOnThis(CurrentCpu, Mp, cpu, (UINTN) Buffer + sizeof(CPU_MICROCODE_HEADER));
+    TestCpu = TriggerMicrocodeUpdateOnThis(CurrentCpu, Mp, cpu, (UINTN) Buffer + sizeof(CPU_MICROCODE_HEADER));
     Print(L"CPU %u is on microcode version %x\n", cpu, TestCpu);
   }
 

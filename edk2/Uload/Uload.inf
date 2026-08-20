@@ -19,7 +19,6 @@
   MdePkg/MdePkg.dec
   ShellPkg/ShellPkg.dec
   UefiCpuPkg/UefiCpuPkg.dec
-  IntelSiliconPkg/IntelSiliconPkg.dec
 
 [LibraryClasses]
   ShellCEntryLib

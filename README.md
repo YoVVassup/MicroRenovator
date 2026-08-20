@@ -27,6 +27,7 @@ adding a custom EFI boot script which loads microcode prior to the operating
 system being run. This enables the operating system kernel to detect the updated
 microcode and enable Spectre mitigations that depend on it.
 
+
 ## Usage
 
 Boot the target system using a linux LiveCD or USB, such as
@@ -63,7 +64,7 @@ Install the LiveCD Creator utility and the sample kickstart files, and make a
 local copy of the kickstart files to work with.
 ```
 dnf -y install livecd-tools spin-kickstarts
-cp /usr/share/spin-kickstarts/\*.ks .
+cp /usr/share/spin-kickstarts/*.ks .
 ```
 The LiveCD utility will need to be modified to launch the correct OS on boot.
 ```
@@ -80,21 +81,176 @@ run the uRenovate.sh installer script.
 
 ## Building EFI Utilities
 
-Building the EFI applications requires an
-[EDK2 environment](https://github.com/tianocore/tianocore.github.io/wiki/Common-instructions).
+Building the EFI applications requires
+[EDK2](https://github.com/tianocore/edk2).
 
-Copy the Uload directory into the edk2/ folder of a configured EDK2 environment,
-and run the following:
+### Linux (GCC5)
+
 ```
-build -a X64 -p ShellPkg/ShellPkg.dsc -b RELEASE
-build -a X64 -p Uload/Uload.dsc -b RELEASE
+git clone https://github.com/tianocore/edk2.git
+cd edk2
+git submodule update --init --depth 1
 ```
+
+Copy the `Uload/` directory into the `edk2/` folder, then run:
+```
+./build_efi.sh
+```
+Or manually:
+```
+sed -i 's/NoInterrupt  = FALSE/NoInterrupt  = TRUE/' ShellPkg/Application/Shell/Shell.c
+make -C BaseTools
+. edksetup.sh
+build -a X64 -p ShellPkg/ShellPkg.dsc -b RELEASE -t GCC5
+build -a X64 -p Uload/Uload.dsc -b RELEASE -t GCC5
+```
+
+### Windows (Visual Studio 2022)
+
+Requirements:
+- [Visual Studio 2022](https://visualstudio.microsoft.com/) with **Desktop development with C++** workload
+- [NASM](https://www.nasm.us/) (2.16.01 or later) — add to PATH
+- [Python 3](https://www.python.org/) — add to PATH
+
+From **Developer Command Prompt for VS 2022**:
+```
+build_efi_win.bat
+```
+Or manually:
+```
+cd edk2
+nmake
+build -a X64 -p ShellPkg\ShellPkg.dsc -b RELEASE -t VS2022
+build -a X64 -p Uload\Uload.dsc -b RELEASE -t VS2022
+```
+
+Output files:
+- `edk2/Build/Shell/RELEASE_VS2022/X64/.../Shell.efi`
+- `edk2/Build/Uload/RELEASE_VS2022/X64/Uload.efi`
 
 To use the resulting files instead of the provided .efi binaries, change the
-"edk2_dir" in uRenovate.sh to point at the desired edk2/ directory.
+`edk2_dir` in `uRenovate.sh` to point at the desired `edk2/` directory.
 
 If using a LiveCD created by the MicroRenovator kickstart file, running the
-included build_efi.sh script will generate the necessary files.
+included `build_efi.sh` script will generate the necessary files.
+
+
+## Testing in QEMU
+
+You can test Uload.efi in a QEMU virtual machine before deploying on real hardware. QEMU with TCG emulation allows microcode MSR writes, so the microcode version will actually update (unlike VMware which blocks MSR access).
+
+### Prerequisites
+
+- [QEMU](https://qemu.weilnetz.de/w64/) (11.0 or later) — install to default location
+- OVMF firmware files (downloaded automatically by `run_qemu.bat` on first run, or manually from [ovmf-prebuilt](https://github.com/rust-osdev/ovmf-prebuilt/releases/latest))
+- The built `Shell.efi` and `Uload.efi`
+- A microcode `.bin` file (see [Microcode Files](#microcode-files))
+
+### Quick start
+
+1. **Download OVMF** (one-time setup):
+```powershell
+cd C:\Temp\opencode\uefi-test
+# Download OVMF firmware from rust-osdev/ovmf-prebuilt
+Invoke-WebRequest -Uri "https://github.com/rust-osdev/ovmf-prebuilt/releases/download/edk2-stable202602-r1/edk2-stable202602-r1-bin.tar.xz" -OutFile ovmf.tar.xz
+# Extract x64/code.fd and x64/vars.fd to current directory
+```
+
+2. **Create boot directory**:
+```
+boot\
+  EFI\
+    BOOT\
+      BOOTX64.EFI      ← Shell.efi
+      startup.nsh       ← auto-run script
+    MICRO\
+      ULOAD.EFI         ← Uload.efi
+  haswell_0x22.bin      ← microcode file
+```
+
+3. **Create `boot\EFI\BOOT\startup.nsh`**:
+```
+@echo off
+map -r
+\EFI\MICRO\ULOAD.EFI haswell_0x22.bin
+```
+
+4. **Run QEMU**:
+```powershell
+# Copy OVMF_VARS template (fresh each run)
+copy vars.fd vars_test.fd
+
+# Launch QEMU with OVMF
+qemu-system-x86_64.exe `
+  -machine q35 `
+  -cpu Haswell `
+  -m 2048 `
+  -smp 4 `
+  -drive if=pflash,format=raw,unit=0,file=code.fd,readonly=on `
+  -drive if=pflash,format=raw,unit=1,file=vars_test.fd `
+  -drive file="fat:rw:boot",format=raw `
+  -net none
+```
+
+Or use the included `run_qemu.bat` script.
+
+### Expected output
+
+```
+Shell> \EFI\MICRO\ULOAD.EFI haswell_0x22.bin
+Loading microcode from: haswell_0x22.bin
+Patch header version = 1
+Patch update revision = 0x22
+Patch date = 1272017
+Patch processor signature = 0x306C3
+...
+4 Processors detected, 4 enabled
+Attempting to load ucode on processor 0
+CPU 0 is on microcode version 1
+Attempting to load ucode on processor 1
+CPU 1 is on microcode version 1
+Attempting to load ucode on processor 2
+CPU 2 is on microcode version 1
+Attempting to load ucode on processor 3
+CPU 3 is on microcode version 1
+```
+
+The microcode version changes from `0` to `1`, confirming that QEMU's TCG emulation allows the MSR write to go through.
+
+
+## Microcode Files
+
+Uload.efi loads a raw Intel microcode binary file. By default it looks for
+`ucode.pdb` in the root of the EFI partition, but you can specify any filename
+as a command-line argument:
+
+### Obtaining microcode binaries
+
+Intel provides microcode updates through the
+[Microcode Guidance](https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa00115.html)
+document and the [Linux firmware repository](https://github.com/intel/Intel-Linux-Process-Microcode-File).
+
+**From Intel Microcode Guidance (recommended):**
+
+1. Download the Microcode Revision Guidance PDF from
+   [Intel SA00115](https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa00115.html)
+2. Find your CPU model (check `CPUID` with CPU-Z or similar tool)
+3. Download the corresponding `.bin` file from the guidance tables
+4. Use with Uload.efi: `Uload.efi haswell_0x22.bin`
+
+**From Linux firmware repository:**
+```
+git clone https://github.com/intel/Intel-Linux-Process-Microcode-File.git
+```
+The `.bin` files are in the `intel-ucode/` directory. Use `iucode_tool` to
+find the correct one for your processor:
+```
+iucode_tool -l intel-ucode/
+```
+
+Example microcode files are provided in `third-party/`:
+- `haswell_0x22.bin` — Microcode revision 0x22 for Haswell processors
+  (CPUID 0x306C3, date 2017-12-07)
 
 
 ## Known Issues
